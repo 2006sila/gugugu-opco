@@ -233,6 +233,38 @@ export function SettingsView({ data }: { data: ConsoleData }) {
               );
             })}
           </div>
+
+          <div className="mt-4 space-y-3 rounded-md border border-border bg-muted/30 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">轮换策略</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  {settings.proxyStrategy === "rotate"
+                    ? "轮转：每个请求换下一个可用出口（按 IP 限额时的正确姿势）"
+                    : "优先填充：一直用权重最高的节点，直到它不可用"}
+                </div>
+              </div>
+              <Switch
+                disabled={busy}
+                checked={settings.proxyStrategy === "rotate"}
+                aria-label="轮换策略"
+                onCheckedChange={(enabled) => updateSettings({ proxyStrategy: enabled ? "rotate" : "fill" })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">单节点每日轮换阈值（0 = 只按每日上限换）</Label>
+              <Input
+                type="number"
+                min={0}
+                disabled={busy}
+                value={settings.rotateAt}
+                onChange={(e) => updateSettings({ rotateAt: Number(e.target.value) })}
+              />
+              <p className="text-xs text-muted-foreground">
+                一个出口用满这个次数后就跳过它，等下一个自然日自动恢复。免费层按 IP 记额度，建议 150。
+              </p>
+            </div>
+          </div>
         </Card>
       </motion.div>
 

@@ -27,6 +27,12 @@ interface LoginBody {
   password?: string;
 }
 
+interface ImportProxiesBody {
+  text?: string;
+  url?: string;
+  type?: "http" | "https" | "socks5";
+}
+
 interface ProxyListQuery {
   page?: string | number;
   pageSize?: string | number;
@@ -35,6 +41,64 @@ interface ProxyListQuery {
 const positiveInteger = (value: unknown, fallback: number): number => {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+interface ParsedProxy {
+  name: string;
+  type: "http" | "https" | "socks5";
+  url: string;
+}
+
+/**
+ * Accepts the shapes people actually paste: full URLs, host:port, and the
+ * "host:port:user:pass" form most proxy vendors hand out.
+ */
+const parseProxyLines = (text: string, defaultType: "http" | "https" | "socks5"): ParsedProxy[] => {
+  const fallbackType = defaultType === "socks5" ? "socks5" : defaultType;
+  const fallbackScheme = defaultType === "socks5" ? "socks5" : defaultType;
+  const out: ParsedProxy[] = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
+    let type: "http" | "https" | "socks5" = fallbackType;
+    let url = line;
+    const scheme = line.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+    if (scheme) {
+      const name = (scheme[1] ?? "").toLowerCase();
+      if (name.startsWith("socks")) {
+        type = "socks5";
+        if (!/^socks5:\/\//i.test(url)) url = "socks5://" + url.slice(line.indexOf("://") + 3);
+      } else if (name === "https") {
+        type = "https";
+      } else if (name === "http") {
+        type = "http";
+      } else {
+        continue;
+      }
+    } else if (/^[^\s:]+:\d+:[^\s:]+:[^\s:]+$/.test(line)) {
+      const [host, port, user, pass] = line.split(":");
+      if (!host || !port || !user || !pass) continue;
+      url = fallbackScheme + "://" + encodeURIComponent(user) + ":" + encodeURIComponent(pass) + "@" + host + ":" + port;
+      type = fallbackType;
+    } else {
+      url = fallbackScheme + "://" + line;
+      type = fallbackType;
+    }
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname || !parsed.port) continue;
+      out.push({ name: parsed.hostname + ":" + parsed.port, type, url });
+    } catch {
+      continue;
+    }
+  }
+  const seen = new Set<string>();
+  return out.filter((entry) => {
+    const key = entry.url.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 export const registerAdminRoutes = async (
@@ -219,6 +283,43 @@ export const registerAdminRoutes = async (
   }));
 
   app.get("/admin/metrics", async () => ({ data: metrics.snapshot() }));
+
+  app.post<{ Body: ImportProxiesBody }>("/admin/proxies/import", async (request, reply) => {
+    const body = request.body || {};
+    let text = typeof body.text === "string" ? body.text : "";
+    if (!text && typeof body.url === "string" && body.url.trim()) {
+      try {
+        const response = await fetch(body.url.trim(), { cache: "no-store" });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        text = await response.text();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.code(400).send({ error: { message: "cannot fetch proxy list: " + message } });
+      }
+    }
+    if (!text.trim()) return reply.code(400).send({ error: { message: "text or url is required" } });
+
+    const defaultType: "http" | "https" | "socks5" = body.type === "socks5" ? "socks5" : body.type === "https" ? "https" : "http";
+    const parsed = parseProxyLines(text, defaultType);
+    const known = new Set(proxyPool.list().map((node) => node.url.trim().toLowerCase()));
+    const added: string[] = [];
+    const skipped: string[] = [];
+    const invalid: string[] = [];
+    for (const entry of parsed) {
+      const key = entry.url.toLowerCase();
+      if (known.has(key)) { skipped.push(entry.url); continue; }
+      try {
+        proxyPool.create({ name: entry.name, type: entry.type, url: entry.url });
+        known.add(key);
+        added.push(entry.url);
+      } catch (error) {
+        invalid.push(entry.url + " :: " + (error instanceof Error ? error.message : String(error)));
+      }
+    }
+    return reply.code(added.length > 0 ? 201 : 200).send({
+      data: { added: added.length, skipped: skipped.length, invalid: invalid.slice(0, 5), items: added.slice(0, 20) },
+    });
+  });
 
   app.post<{ Body: ProxyInput }>("/admin/proxies", async (request, reply) => {
     try {

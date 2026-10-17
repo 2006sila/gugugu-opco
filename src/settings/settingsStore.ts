@@ -8,6 +8,10 @@ export interface SystemSettings {
   openAiStreamTransformModels: string[];
   reasoningTagModels: string[];
   proxyMode: "direct" | "optional" | "required";
+  /** "rotate" spreads requests across exits (per-IP quotas); "fill" keeps using the top-weighted node. */
+  proxyStrategy: "rotate" | "fill";
+  /** Leave a node once its daily counter reaches this value (0 = only the hard daily limit applies). */
+  rotateAt: number;
   outboundPreProxyEnabled: boolean;
   outboundPreProxyUrl: string;
   logEnabled: boolean;
@@ -39,11 +43,13 @@ const LEGACY_DEFAULT_REQUEST_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_SETTINGS: SystemSettings = {
   requestBodyLimitBytes: DEFAULT_REQUEST_BODY_LIMIT_BYTES,
   upstreamTimeoutMs: 120000,
-  autoRetryCount: 1,
+  autoRetryCount: 3,
   defaultStream: false,
   openAiStreamTransformModels: [],
   reasoningTagModels: [],
   proxyMode: "optional",
+  proxyStrategy: "rotate",
+  rotateAt: 150,
   outboundPreProxyEnabled: false,
   outboundPreProxyUrl: "",
   logEnabled: false,
@@ -188,6 +194,20 @@ export class SettingsStore {
         throw new Error("apiAuthMode must be key or off");
       }
       this.settings.apiAuthMode = input.apiAuthMode;
+    }
+
+    if (input.proxyStrategy !== undefined) {
+      if (!["rotate", "fill"].includes(input.proxyStrategy)) {
+        throw new Error("proxyStrategy must be rotate or fill");
+      }
+      this.settings.proxyStrategy = input.proxyStrategy;
+    }
+
+    if (input.rotateAt !== undefined) {
+      if (!Number.isFinite(input.rotateAt) || input.rotateAt < 0) {
+        throw new Error("rotateAt must be 0 or a positive number");
+      }
+      this.settings.rotateAt = Math.trunc(input.rotateAt);
     }
 
     if (input.proxyMode !== undefined) {

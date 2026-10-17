@@ -32,6 +32,8 @@ export interface ProxyNode {
   dailyRequestCount: number;
   dailyCountDate: string;
   autoDisableWhenDailyLimitReached: boolean;
+  /** Tunnel proxies hand out a fresh IP per connection, so keep-alive must be off. */
+  stateless?: boolean;
   consecutiveRateLimitCount: number;
   autoDisabledBy429: boolean;
   lastRecoveryTestAt: string | null;
@@ -61,7 +63,7 @@ interface ProxyFile {
 
 type ProxyStaticNode = Pick<ProxyNode,
   "id" | "name" | "type" | "url" | "enabled" | "weight" | "maxConcurrency"
-  | "dailyRequestLimit" | "autoDisableWhenDailyLimitReached">;
+  | "dailyRequestLimit" | "autoDisableWhenDailyLimitReached" | "stateless">;
 
 interface ProxyState {
   enabled: boolean;
@@ -103,6 +105,7 @@ export interface ProxyInput {
   maxConcurrency?: number;
   dailyRequestLimit?: number;
   autoDisableWhenDailyLimitReached?: boolean;
+  stateless?: boolean;
 }
 
 export interface ProxyLease {
@@ -181,6 +184,8 @@ export class ProxyPoolStore {
   private readonly recoveryTestsInFlight = new Set<string>();
   private readonly activeLeases = new Map<string, { nodeId: string; model?: string }>();
   private recoveryRunInFlight = false;
+  /** Round-robin position for the "rotate" strategy. */
+  private rotateCursor = 0;
   private configPersistTimer: NodeJS.Timeout | undefined;
   private statePersistTimer: NodeJS.Timeout | undefined;
   private configDirty = false;
@@ -289,6 +294,7 @@ export class ProxyPoolStore {
     if (input.maxConcurrency !== undefined) node.maxConcurrency = Math.max(1, Math.trunc(input.maxConcurrency));
     if (input.dailyRequestLimit !== undefined) node.dailyRequestLimit = Math.max(0, Math.trunc(input.dailyRequestLimit));
     if (input.autoDisableWhenDailyLimitReached !== undefined) node.autoDisableWhenDailyLimitReached = input.autoDisableWhenDailyLimitReached;
+    if (input.stateless !== undefined) node.stateless = input.stateless;
 
     this.validateNode(node);
     this.persistConfig();
@@ -312,9 +318,13 @@ export class ProxyPoolStore {
   acquire(excludeProxyIds: ReadonlySet<string> = new Set(), model?: string): ProxyLease {
     this.resetDailyIfNeeded();
     const now = Date.now();
+    const settings = this.settingsStore.get();
+    // Per-IP free quotas are the reason to spread traffic: skip a node once its
+    // daily counter is high enough, so the next exit takes over before a 429.
+    const rotateAt = Math.max(0, settings.rotateAt ?? 0);
     // Do not sort the entire pool for every request. With tens of thousands of
     // nodes this changes acquire from O(n log n) to a single O(n) scan.
-    let node: ProxyNode | undefined;
+    const available: ProxyNode[] = [];
     for (const candidate of this.proxies) {
       if (!candidate.enabled || excludeProxyIds.has(candidate.id)) continue;
       if (!isProxyCompatibleWithModel(candidate, model)) continue;
@@ -323,10 +333,21 @@ export class ProxyPoolStore {
       if (rateLimitState?.cooldownUntil && Date.parse(rateLimitState.cooldownUntil) > now) continue;
       if (!model && candidate.cooldownUntil && Date.parse(candidate.cooldownUntil) > now) continue;
       if (candidate.dailyRequestLimit !== 0 && candidate.dailyRequestCount >= candidate.dailyRequestLimit) continue;
+      if (rotateAt > 0 && candidate.dailyRequestCount >= rotateAt) continue;
       if (candidate.currentConcurrency >= candidate.maxConcurrency) continue;
-      if (!node || candidate.weight > node.weight) node = candidate;
+      available.push(candidate);
     }
-    if (!node) return { node: null, requiredUnavailable: this.settingsStore.get().proxyMode === "required" };
+    let node: ProxyNode | undefined;
+    if (available.length > 0) {
+      if (settings.proxyStrategy === "fill") {
+        node = available.reduce((best, candidate) => (candidate.weight > best.weight ? candidate : best));
+      } else {
+        // rotate: round-robin over the currently usable exits
+        node = available[this.rotateCursor % available.length];
+        this.rotateCursor = (this.rotateCursor + 1) % 1000003;
+      }
+    }
+    if (!node) return { node: null, requiredUnavailable: settings.proxyMode === "required" };
 
     // Construct the agent before mutating counters. A malformed persisted proxy
     // must not consume a concurrency slot when agent construction throws.
@@ -619,6 +640,7 @@ export class ProxyPoolStore {
       dailyRequestCount: 0,
       dailyCountDate: today(),
       autoDisableWhenDailyLimitReached: input.autoDisableWhenDailyLimitReached ?? false,
+      stateless: input.stateless ?? false,
       consecutiveRateLimitCount: 0,
       autoDisabledBy429: false,
       lastRecoveryTestAt: null,
@@ -640,7 +662,11 @@ export class ProxyPoolStore {
     const preProxyUrl = settings.outboundPreProxyEnabled ? settings.outboundPreProxyUrl : "";
     if (preProxyUrl && node.type === "socks5") return new HttpPreProxyToSocksAgent(preProxyUrl, node.url);
     if (preProxyUrl && ["http", "https"].includes(node.type)) return new HttpPreProxyToHttpAgent(preProxyUrl, node.url);
-    return node.type === "socks5" ? new SocksProxyAgent(node.url) as unknown as https.Agent : new HttpsProxyAgent(node.url) as unknown as https.Agent;
+    // A tunnel proxy hands out a new IP per connection: never reuse sockets.
+    const agentOptions = node.stateless ? { keepAlive: false } : undefined;
+    return node.type === "socks5"
+      ? new SocksProxyAgent(node.url, agentOptions) as unknown as https.Agent
+      : new HttpsProxyAgent(node.url, agentOptions) as unknown as https.Agent;
   }
 
   private validateNode(node: ProxyNode): void {
@@ -705,6 +731,7 @@ export class ProxyPoolStore {
       dailyRequestLimit: Number.isFinite(node.dailyRequestLimit) ? Math.max(0, Math.trunc(node.dailyRequestLimit)) : 0,
       dailyRequestCount: dailyCountDate === current && Number.isFinite(node.dailyRequestCount) ? Math.max(0, Math.trunc(node.dailyRequestCount)) : 0,
       autoDisableWhenDailyLimitReached: Boolean(node.autoDisableWhenDailyLimitReached),
+      stateless: Boolean(node.stateless),
       consecutiveRateLimitCount: Number.isFinite(node.consecutiveRateLimitCount) ? Math.max(0, Math.trunc(node.consecutiveRateLimitCount)) : 0,
       autoDisabledBy429: legacyAutoDisabledBy429 && !node.enabled ? false : Boolean(node.autoDisabledBy429),
       lastRecoveryTestAt: node.lastRecoveryTestAt || null,

@@ -70,6 +70,7 @@ export function useConsoleData() {
   const [metricsData, setMetricsData] = useState<MetricsPayload | null>(null);
 
   const [busy, setBusy] = useState(false);
+  const [lastImport, setLastImport] = useState<{ added: number; skipped: number; invalid: string[] } | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -406,6 +407,21 @@ export function useConsoleData() {
   const toggleProxy = (proxy: ProxyNode) =>
     run(() => apiFetch(`/admin/proxies/${proxy.id}`, token, { method: "PATCH", body: JSON.stringify({ enabled: !proxy.enabled }) }).then(() => undefined), { refreshProxies: true });
 
+  const toggleProxyStateless = (proxy: ProxyNode) =>
+    run(() => apiFetch(`/admin/proxies/${proxy.id}`, token, { method: "PATCH", body: JSON.stringify({ stateless: !proxy.stateless }) }).then(() => undefined), { refreshProxies: true });
+
+  const importProxies = (text: string) =>
+    run(
+      async () => {
+        const result = await apiFetch<{ data: { added: number; skipped: number; invalid: string[] } }>("/admin/proxies/import", token, {
+          method: "POST",
+          body: JSON.stringify({ text, type: "http" }),
+        });
+        setLastImport(result.data);
+      },
+      { refreshProxies: true },
+    );
+
   const testProxy = (proxy: ProxyNode) =>
     run(() => apiFetch(`/admin/proxies/${proxy.id}/test`, token, { method: "POST" }).then(() => undefined), { refreshProxies: true, successText: `代理「${proxy.name}」测试成功` });
 
@@ -471,7 +487,10 @@ export function useConsoleData() {
     updateModelAliases,
     updateSettings,
     createProxy,
+    importProxies,
+    lastImport,
     toggleProxy,
+    toggleProxyStateless,
     testProxy,
     deleteProxy,
     clearProxyStats,

@@ -54,6 +54,8 @@ export interface SystemSettings {
   openAiStreamTransformModels: string[];
   reasoningTagModels: string[];
   proxyMode: "direct" | "optional" | "required";
+  proxyStrategy: "rotate" | "fill";
+  rotateAt: number;
   outboundPreProxyEnabled: boolean;
   outboundPreProxyUrl: string;
   logEnabled: boolean;
@@ -104,6 +106,7 @@ export interface ProxyNode {
   dailyRequestCount: number;
   dailyCountDate: string;
   autoDisableWhenDailyLimitReached: boolean;
+  stateless?: boolean;
   consecutiveRateLimitCount: number;
   autoDisabledBy429: boolean;
   lastRecoveryTestAt: string | null;

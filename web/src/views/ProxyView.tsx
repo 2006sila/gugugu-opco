@@ -36,8 +36,9 @@ const stateBadge = (proxy: ProxyNode): { label: string; variant: "muted" | "warn
 };
 
 export function ProxyView({ data }: { data: ConsoleData }) {
-  const { proxies, proxyPagination, busy, loadProxyPage, createProxy, toggleProxy, testProxy, deleteProxy, clearProxyStats } = data;
+  const { proxies, proxyPagination, busy, loadProxyPage, createProxy, importProxies, lastImport, toggleProxy, toggleProxyStateless, testProxy, deleteProxy, clearProxyStats } = data;
   const [draft, setDraft] = useState<ProxyDraft>({ name: "", type: "http", url: "", dailyRequestLimit: 1000, maxConcurrency: 10 });
+  const [importText, setImportText] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ProxyNode | null>(null);
   const [statsTarget, setStatsTarget] = useState<ProxyNode | null>(null);
   const [showProxyDetails, setShowProxyDetails] = useState(false);
@@ -87,6 +88,34 @@ export function ProxyView({ data }: { data: ConsoleData }) {
           <InfoCard icon={<CheckCircle2 size={16} className="text-success" />} title="优先节点" value={prioritized?.name || "无可用"} sub="按权重与可用性选出" />
         </motion.div>
       </motion.div>
+
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold">批量导入</h2>
+          <span className="text-xs text-muted-foreground">一行一个：http://user:pass@host:port / socks5://host:port / host:port</span>
+        </div>
+        <div className="mt-3 space-y-2">
+          <textarea
+            className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            placeholder={"http://user:pass@1.2.3.4:8080\nsocks5://5.6.7.8:1080\n9.9.9.9:3128"}
+            value={importText}
+            onChange={(event) => setImportText(event.target.value)}
+            disabled={busy}
+            aria-label="批量导入代理列表"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" disabled={busy || !importText.trim()} onClick={() => importProxies(importText)}>
+              <Plus size={16} /> 导入
+            </Button>
+            {lastImport && (
+              <span className="text-xs text-muted-foreground">
+                新增 {lastImport.added} · 跳过重复 {lastImport.skipped}
+                {lastImport.invalid.length > 0 ? ` · 无效 ${lastImport.invalid.length}` : ""}
+              </span>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3">
@@ -244,6 +273,21 @@ export function ProxyView({ data }: { data: ConsoleData }) {
                     <div className="text-muted-foreground">今日 Tokens</div>
                     <div className="font-semibold tabular-nums text-foreground">{formatCompactTokens(proxy.dailyTokens)}</div>
                   </div>
+                </div>
+
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <div className="font-medium">无状态（隧道代理）</div>
+                    <div className="text-muted-foreground">
+                      {proxy.stateless ? "每条请求新建连接，按连接换 IP" : "复用连接（固定出口）"}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={Boolean(proxy.stateless)}
+                    disabled={busy}
+                    aria-label={`${proxy.name} 无状态模式`}
+                    onCheckedChange={() => toggleProxyStateless(proxy)}
+                  />
                 </div>
 
                 {showProxyDetails && <div className="mt-3 flex flex-wrap gap-2">

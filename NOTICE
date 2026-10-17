@@ -1,0 +1,57 @@
+OpenCodeProxyHub is an independent project licensed under the MIT License.
+
+This project is derived from and substantially inspired by:
+
+  opencode-free-proxy
+  https://github.com/bigdata2211it-web/opencode-free-proxy
+
+The original project declares the MIT License in its package metadata and README.
+
+OpenCodeProxyHub reimplements and extends the original project's core
+compatibility behavior, including:
+
+- exposing OpenCode free models through OpenAI-compatible and Anthropic-compatible endpoints
+- forwarding requests to the OpenCode Zen API
+- using the required x-opencode-* upstream request headers
+- model compatibility behavior for free model IDs
+- OpenAI/Anthropic message conversion concepts
+- API-key based local access control concepts
+
+OpenCodeProxyHub has since been substantially rewritten and expanded with:
+
+- TypeScript and Fastify backend architecture
+- React/Vite Web UI
+- hashed and recoverable API key management
+- model and settings persistence
+- proxy pool and chained proxy support
+- rate limiting
+- observability
+- Docker Compose deployment
+
+OpenCodeProxyHub is not affiliated with OpenCode, opencode-free-proxy, or any
+upstream service provider.
+
+The MIT License for this project applies only to this source code. It does not
+grant rights to use third-party services, APIs, trademarks, or infrastructure
+beyond their own terms.
+
+This project is provided for study and technical research purposes only. Users
+are solely responsible for complying with the terms of any third-party service
+they connect to and with applicable laws. See the Disclaimer section in README.md
+for details.
+
+## zen-hub (this build)
+
+zen-hub is a personal, single-user fork of OpenCodeProxyHub at commit 7c3ea8a.
+It keeps the upstream protocol implementation (Zen wire identity, tool gating,
+streaming converters) and changes the operational shape:
+
+- loopback-only default binding, port 8790 with automatic fallback
+- single UPSTREAM_PROXY egress override, direct connection by default
+- first-run admin password generation, optional AUTH_MODE=off
+- live free-catalog reconciliation that retires ids upstream stopped serving
+- a gate probe (scripts/compat.mjs) that reports when the upstream
+  client-binding contract changes
+
+Changes by this fork remain under the MIT License of the original project.
+The original authors are not responsible for this fork; see README.md.

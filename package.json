@@ -1,0 +1,55 @@
+{
+  "name": "zen-hub",
+  "version": "0.2.0",
+  "description": "Personal loopback gateway for the OpenCode Zen free tier (OpenAI / Responses / Anthropic / System One)",
+  "type": "module",
+  "main": "dist/main.js",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "dev:web": "npm --prefix web run dev",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "build:web": "npm --prefix web run build",
+    "build:all": "npm run build && npm run build:web",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "doctor": "node scripts/doctor.mjs",
+    "smoke:auth": "node scripts/smoke-auth.mjs",
+    "console:auth": "node scripts/dev-console-auth.mjs",
+    "compat": "node scripts/compat.mjs",
+    "ports": "node scripts/port-check.mjs",
+    "probe:context": "node scripts/probe-context.mjs",
+    "e2e": "node scripts/e2e.mjs",
+    "smoke:protocol": "node scripts/checks/protocol-smoke.mjs",
+    "check:responses": "tsx scripts/checks/responses-conversion-check.ts",
+    "check:tools": "tsx scripts/checks/tool-mapping-check.ts",
+    "check:systemone": "tsx scripts/checks/systemone-routing-check.ts",
+    "check:proxy-routing": "tsx scripts/checks/proxy-routing-check.ts",
+    "check:opencode-compat": "tsx scripts/checks/opencode-compat-check.ts",
+    "check:models-transport": "tsx scripts/checks/models-transport-check.ts",
+    "check:json-store": "tsx scripts/checks/json-store-check.ts",
+    "check:retry-settings": "tsx scripts/checks/retry-settings-check.ts",
+    "check:proxy-performance": "tsx scripts/checks/proxy-pool-performance-check.ts",
+    "check:proxy-rate-limit": "tsx scripts/checks/proxy-rate-limit-check.ts",
+    "check:response-lifecycle": "tsx scripts/checks/response-lifecycle-check.ts",
+    "check:logging": "tsx scripts/checks/logging-removal-check.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^8.0.3",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "https-proxy-agent": "^7.0.6",
+    "redis": "^5.12.1",
+    "socks-proxy-agent": "^8.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

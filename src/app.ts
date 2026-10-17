@@ -1,0 +1,146 @@
+import cors from "@fastify/cors";
+import Fastify from "fastify";
+import type { AppConfig } from "./config/env.js";
+import type { SystemSettings } from "./settings/settingsStore.js";
+import { ApiKeyStore } from "./auth/apiKeys.js";
+import { AdminSessionStore } from "./auth/adminSessions.js";
+import { SessionStore } from "./sessions/sessionStore.js";
+import { registerHealthRoutes } from "./routes/health.js";
+import { registerModelRoutes } from "./routes/models.js";
+import { registerOpenAIRoutes } from "./routes/openai.js";
+import { registerResponsesRoutes } from "./routes/responses.js";
+import { registerAnthropicRoutes } from "./routes/anthropic.js";
+import { registerSystemoneRoutes } from "./routes/systemone.js";
+import { registerAdminRoutes } from "./routes/admin.js";
+import { registerWebRoutes } from "./routes/web.js";
+import { ModelConfigStore } from "./models/catalog.js";
+import { ModelAliasStore } from "./models/aliases.js";
+import { SettingsStore } from "./settings/settingsStore.js";
+import { ProxyPoolStore } from "./proxy/proxyPool.js";
+import { createLimiter } from "./rateLimit/limiter.js";
+import { RequestTracker } from "./runtime/requestTracker.js";
+import { MetricsStore, registerMetricsHooks } from "./observability/metrics.js";
+import { EventLogger } from "./observability/eventLogger.js";
+import { API_RESPONSE_HEADERS } from "./utils/responseHeaders.js";
+
+export const buildApp = async (config: AppConfig) => {
+  const settingsStore = new SettingsStore(config.settingsFile, {
+    upstreamTimeoutMs: config.upstreamTimeoutMs,
+    proxyMode: config.proxyMode,
+    outboundPreProxyEnabled: config.outboundPreProxyEnabled,
+    outboundPreProxyUrl: config.outboundPreProxyUrl,
+    globalRequestsPerMinute: config.globalRequestsPerMinute,
+    apiKeyRequestsPerMinute: config.apiKeyRequestsPerMinute,
+    apiKeyMaxConcurrentRequests: config.apiKeyMaxConcurrentRequests,
+    apiKeyMaxConcurrentStreams: config.apiKeyMaxConcurrentStreams,
+    consoleAuthMode: config.consoleAuthMode,
+    apiAuthMode: config.authMode,
+    openConsoleOnStart: config.openConsoleOnStart,
+    contextUnlock: config.contextUnlock,
+  });
+  settingsStore.load();
+  // Explicit env values beat stored settings for these boot-level switches, so
+  // config.env stays authoritative when someone sets it on purpose.
+  const forced: Partial<SystemSettings> = {};
+  if (process.env.CONTEXT_UNLOCK !== undefined) forced.contextUnlock = config.contextUnlock;
+  if (process.env.AUTH_MODE !== undefined) forced.apiAuthMode = config.authMode;
+  if (process.env.CONSOLE_AUTH !== undefined) forced.consoleAuthMode = config.consoleAuthMode;
+  if (Object.keys(forced).length > 0) settingsStore.update(forced);
+  const settings = settingsStore.get();
+
+  const app = Fastify({ logger: true, bodyLimit: settings.requestBodyLimitBytes });
+  app.addHook("onRequest", async (request, reply) => {
+    const pathname = request.url.split("?", 1)[0] ?? "";
+    if (pathname !== "/health" && !/^\/(?:v1|zen\/v1|admin)(?:\/|$)/.test(pathname)) return;
+    // Set raw headers before routing so hijacked streams, authentication
+    // failures and validation errors receive the same policy as JSON replies.
+    for (const [name, value] of Object.entries(API_RESPONSE_HEADERS)) {
+      reply.raw.setHeader(name, value);
+    }
+  });
+  const metrics = new MetricsStore();
+  const eventLogger = new EventLogger(settingsStore, config.logsDir);
+  app.addHook("onError", async (request, _reply, error) => {
+    eventLogger.error({ method: request.method, route: request.routeOptions.url, message: error.message });
+  });
+  registerMetricsHooks(app, metrics);
+  await app.register(cors, {
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+  });
+
+  // The runtime switch in the console wins over the env default after load().
+  const keyStore = new ApiKeyStore(config.keysFile, config.storePlaintextApiKeys, settings.apiAuthMode);
+  keyStore.load();
+  const modelStore = new ModelConfigStore(config.modelsFile);
+  modelStore.load();
+  const modelAliasStore = new ModelAliasStore(config.modelAliasesFile);
+  modelAliasStore.load();
+  const proxyHealthCheckModel = () => modelStore.isEnabled(config.proxyHealthCheckModel)
+    ? config.proxyHealthCheckModel
+    : modelStore.enabledIds()[0] || config.proxyHealthCheckModel;
+  const proxyHealthCheckOptions = () => {
+    const model = proxyHealthCheckModel();
+    const systemOneOnly = modelStore.isSystemOneOnly(model);
+    const useResponses = !systemOneOnly && modelStore.usesResponses(model);
+    return {
+      hostname: config.zenHost,
+      path: systemOneOnly ? config.zenSystemonePath : useResponses ? config.zenResponsesPath : config.zenPath,
+      protocol: systemOneOnly ? "systemone" as const : useResponses ? "responses" as const : "chat_completions" as const,
+      model,
+      timeoutMs: config.proxyHealthCheckTimeoutMs,
+      recoveryIntervalMs: config.proxyRecoveryIntervalMs,
+    };
+  };
+  const proxyPool = new ProxyPoolStore(config.proxiesFile, settingsStore, {
+    persistDebounceMs: config.proxyPersistDebounceMs,
+    cooldownMs: config.proxyCooldownMs,
+    recoveryConcurrency: config.proxyRecoveryConcurrency,
+    recoveryBatchSize: config.proxyRecoveryBatchSize,
+  });
+  const proxyCount = proxyPool.load();
+  if (proxyCount >= config.proxyLargePoolWarningThreshold) {
+    app.log.warn({ proxyCount, threshold: config.proxyLargePoolWarningThreshold }, "large_proxy_pool_performance_protection_enabled");
+  }
+  const proxyRecoveryTimer = setInterval(() => {
+    void proxyPool.recoverRateLimitedProxies(proxyHealthCheckOptions()).then((summary) => {
+      if (summary.tested > 0) app.log.info(summary, "proxy_recovery_check_completed");
+    }).catch((error) => {
+      app.log.warn({ error }, "proxy_recovery_check_failed");
+    });
+  }, config.proxyRecoveryIntervalMs);
+  proxyRecoveryTimer.unref();
+  const sessions = new SessionStore();
+  const adminSessions = new AdminSessionStore();
+  const requestTracker = new RequestTracker();
+  const limiter = await createLimiter({
+    globalRequestsPerMinute: settings.globalRequestsPerMinute,
+    apiKeyRequestsPerMinute: settings.apiKeyRequestsPerMinute,
+    apiKeyMaxConcurrentRequests: settings.apiKeyMaxConcurrentRequests,
+    apiKeyMaxConcurrentStreams: settings.apiKeyMaxConcurrentStreams,
+  }, config.redisUrl, config.redisKeyPrefix);
+  app.log.info({ limiter: await limiter.snapshot() }, "limiter_ready");
+  app.addHook("onClose", async () => {
+    clearInterval(proxyRecoveryTimer);
+    const drained = await requestTracker.drain(config.shutdownDrainTimeoutMs);
+    if (!drained) app.log.warn({ runtime: requestTracker.snapshot() }, "shutdown_drain_timeout");
+    await proxyPool.flush();
+    await limiter.close();
+  });
+
+  await registerHealthRoutes(app, modelStore, settingsStore);
+  await registerModelRoutes(app, modelStore, modelAliasStore, settingsStore);
+  await registerAdminRoutes(app, config, keyStore, modelStore, modelAliasStore, settingsStore, proxyPool, limiter, requestTracker, metrics, adminSessions);
+  await registerOpenAIRoutes(app, config, keyStore, modelStore, modelAliasStore, settingsStore, sessions, proxyPool, limiter, requestTracker, metrics);
+  await registerResponsesRoutes(app, config, keyStore, modelStore, modelAliasStore, settingsStore, sessions, proxyPool, limiter, requestTracker, metrics);
+  await registerAnthropicRoutes(app, config, keyStore, modelStore, modelAliasStore, settingsStore, sessions, proxyPool, limiter, requestTracker, metrics);
+  await registerSystemoneRoutes(app, config, keyStore, modelStore, modelAliasStore, settingsStore, sessions, proxyPool, limiter, requestTracker, metrics);
+  await registerWebRoutes(app);
+
+  app.setNotFoundHandler(async (_request, reply) => {
+    return reply.code(404).send({ error: { message: "Route not found", type: "not_found_error" } });
+  });
+
+  return { app, keyStore, requestTracker, modelAliasStore, modelStore, settingsStore };
+};

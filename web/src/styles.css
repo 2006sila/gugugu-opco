@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #08090a;
+    --foreground: #f7f8f8;
+    --card: #0e1014;
+    --card-foreground: #f7f8f8;
+    --popover: #131519;
+    --popover-foreground: #f7f8f8;
+    --primary: #5e6ad2;
+    --primary-foreground: #ffffff;
+    --secondary: #181a1f;
+    --secondary-foreground: #e6e7e9;
+    --muted: #14161b;
+    --muted-foreground: #8a8f98;
+    --accent: #1c1f26;
+    --accent-foreground: #f7f8f8;
+    --destructive: #e5484d;
+    --destructive-foreground: #ffffff;
+    --success: #4cb782;
+    --success-foreground: #051a10;
+    --warning: #f5a524;
+    --warning-foreground: #1a1206;
+    --info: #5e6ad2;
+    --info-foreground: #ffffff;
+    --border: #21242b;
+    --input: #21242b;
+    --ring: #5e6ad2;
+    --radius: 8px;
+    --bg-glow: rgba(94, 106, 210, 0.1);
+    --hairline: rgba(255, 255, 255, 0.06);
+    --inset: rgba(255, 255, 255, 0.03);
+    --selection: rgba(94, 106, 210, 0.32);
+    color-scheme: dark;
+  }
+
+  /* Day mode: same token names, light palette. Everything else in the UI reads
+     these variables, so no component needs a theme branch. */
+  :root[data-theme="light"] {
+    --background: #f6f7f9;
+    --foreground: #121317;
+    --card: #ffffff;
+    --card-foreground: #121317;
+    --popover: #ffffff;
+    --popover-foreground: #121317;
+    --primary: #4f5bd5;
+    --primary-foreground: #ffffff;
+    --secondary: #eceef2;
+    --secondary-foreground: #121317;
+    --muted: #eff1f4;
+    --muted-foreground: #5f646d;
+    --accent: #e8eaef;
+    --accent-foreground: #121317;
+    --destructive: #d92d20;
+    --destructive-foreground: #ffffff;
+    --success: #117f5c;
+    --success-foreground: #ffffff;
+    --warning: #b45309;
+    --warning-foreground: #ffffff;
+    --info: #4f5bd5;
+    --info-foreground: #ffffff;
+    --border: #e1e3e8;
+    --input: #dcdfe4;
+    --ring: #4f5bd5;
+    --bg-glow: rgba(94, 106, 210, 0.12);
+    --hairline: rgba(18, 19, 23, 0.08);
+    --inset: rgba(18, 19, 23, 0.03);
+    --selection: rgba(79, 91, 213, 0.22);
+    color-scheme: light;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image: radial-gradient(1200px 600px at 82% -8%, var(--bg-glow), transparent 60%);
+    background-attachment: fixed;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    background: var(--selection);
+    color: var(--foreground);
+  }
+}
+
+@layer components {
+  .surface-inset {
+    @apply rounded-lg border border-border;
+    background: var(--inset);
+  }
+  .glow-primary {
+    box-shadow: 0 0 0 1px rgba(94, 106, 210, 0.35), 0 12px 36px -16px rgba(94, 106, 210, 0.5);
+  }
+  .hairline {
+    border-color: var(--hairline);
+  }
+  .proxy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+    gap: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.oph-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.oph-scroll::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-border;
+}
+.oph-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

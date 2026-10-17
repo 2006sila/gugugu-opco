@@ -7,6 +7,15 @@ set "TMP=%~dp0.tmp"
 set "TEMP=%~dp0.tmp"
 if not exist "%TMP%" mkdir "%TMP%"
 
+if not exist "node_modules\fastify" (
+  echo [zen-hub] dependencies missing, running npm ci ...
+  call npm ci || goto :fail
+)
+if not exist "web\node_modules\vite" (
+  echo [zen-hub] console dependencies missing, running npm ci --prefix web ...
+  call npm ci --prefix web || goto :fail
+)
+
 echo [1/3] typecheck
 call npm run typecheck || goto :fail
 
